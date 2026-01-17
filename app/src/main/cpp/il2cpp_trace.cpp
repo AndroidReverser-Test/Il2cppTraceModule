@@ -111,10 +111,13 @@ void hook_all_fun(){
                 uprobe_offset = fun_addr-start_addrs[i]+vma_base[i];
             }
         }
-        char oinsn[4];
-        memcpy(oinsn,(void *)fun_addr,4);
-//        LOGD("uprobe_offset:%lx,insn:%x %x %x %x",uprobe_offset,oinsn[0],oinsn[1],oinsn[2],oinsn[3]);
-        int set_uprobe_ret = set_fun_info(uprobe_offset,fun_offset,(char*)fun_name.c_str(),oinsn);
+
+        uprobe_item_info *uprobe_item = (uprobe_item_info*)malloc(sizeof(uprobe_item_info));
+        uprobe_item->uprobe_offset = uprobe_offset;
+        uprobe_item->fun_offset = fun_offset;
+        uprobe_item->fun_name = (char*)fun_name.c_str();
+        int set_uprobe_ret = set_fun_info(uprobe_item);//发送hook请求
+
         if(set_uprobe_ret!=SET_TRACE_SUCCESS){
             LOGE("error set uprobe in fun_name:%s,fun_offset:0x%llx,uprobe_offset:%llx",fun_name.c_str(),fun_offset,uprobe_offset);
         }
@@ -153,7 +156,6 @@ void check_all_methods(void *klass,char *clazzName) {
             hook_fun_num++;
         }
     }
-    LOGD("success get all fun");
 }
 
 void trace_type_info(Il2CppMetadataType type_info,char *clazzName) {
@@ -212,12 +214,19 @@ void start_trace(char* data_dir_path){
         return;
     }
 
+    trace_init_info *base_info = (trace_init_info*)malloc(sizeof(trace_init_info));
+    base_info->module_base = il2cpp_base;
+    base_info->uid = getuid();
 
-    int set_module_base_ret = set_module_base(il2cpp_base);
-    int set_target_file_ret = set_target_file(module_path);
-    int set_target_uid_ret = set_target_uid(getuid());
+    base_info->tfile_name = (char *)malloc(strlen(module_path) + 1);
+    strcpy(base_info->tfile_name,module_path);
 
-    if (set_module_base_ret!=SET_TRACE_SUCCESS || set_target_file_ret!=SET_TRACE_SUCCESS || set_target_uid_ret!=SET_TRACE_SUCCESS){
+    base_info->fix_file_name = (char *)malloc(strlen(Fix_Module_Path) + 1);
+    strcpy(base_info->fix_file_name,Fix_Module_Path);
+
+    int sret = trace_init(base_info);
+
+    if (sret!=SET_TRACE_SUCCESS){
         LOGE("init uprobe hook error");
         return;
     }
@@ -250,16 +259,33 @@ void start_trace(char* data_dir_path){
                 clear_all_hook();
                 il2cpp_start_gc_world();
             }
-            for (int i = 0; i < all_type_infos_count; ++i) {
-                if(strcmp(all_type_infos[i].name,tmp_info)==0){
-                    if(hook_fun_num==MAX_HOOK_NUM){
+
+
+            if(strstr(tmp_info,".dll")){
+                LOGD("hook all methods of %s",tmp_info);
+                for (int i = 0; i < all_type_infos_count; ++i) {
+                    if(strstr(tmp_info,all_type_infos[i].assemblyName)){
+                        if(hook_fun_num==MAX_HOOK_NUM){
+                            LOGE("reach MAX_HOOK_NUM:%ld",MAX_HOOK_NUM);
+                            break;
+                        }
+                        trace_type_info(all_type_infos[i],all_type_infos[i].name);
+                    }
+                }
+            } else{
+                for (int i = 0; i < all_type_infos_count; ++i) {
+                    if(strcmp(all_type_infos[i].name,tmp_info)==0){
+                        if(hook_fun_num==MAX_HOOK_NUM){
+                            break;
+                        }
+                        LOGD("trace %s",all_type_infos[i].name);
+                        trace_type_info(all_type_infos[i],all_type_infos[i].name);
                         break;
                     }
-                    LOGD("trace %s",all_type_infos[i].name);
-                    trace_type_info(all_type_infos[i],all_type_infos[i].name);
-                    break;
                 }
             }
+
+
 //            check_fun_instruction();
             il2cpp_stop_gc_world();
             hook_all_fun();
