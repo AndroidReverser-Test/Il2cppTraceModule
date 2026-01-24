@@ -5,6 +5,8 @@
 #include <sstream>
 #include <thread>
 #include <map>
+#include <fcntl.h>
+#include <sys/mman.h>
 #include "log.h"
 #include "xdl.h"
 #include "uprobe_trace_user.h"
@@ -181,12 +183,10 @@ bool init_vma(){
         if(fields==8){
             if(strcmp(path,module_path)==0){
 //                LOGD("start:%lx,end:%lx,permissions:%s,tbase:%lx\n",tstart,tend,permissions,tbase);
-                if(permissions[2]=='x'){
-                    start_addrs[vma_num] = tstart;
-                    end_addrs[vma_num] = tend;
-                    vma_base[vma_num] = tbase;
-                    vma_num++;
-                }
+                start_addrs[vma_num] = tstart;
+                end_addrs[vma_num] = tend;
+                vma_base[vma_num] = tbase;
+                vma_num++;
             }
         }
 
@@ -196,6 +196,47 @@ bool init_vma(){
         return false;
     }
     return true;
+}
+
+void dump_so(){
+    LOGD("start dump libil2cpp.so,base:%llx,end:%llx",il2cpp_base,end_addrs[vma_num-1]);
+    char il2cpp_dump_path[PATH_MAX];
+    sprintf(il2cpp_dump_path,"%s/files/libil2cpp_%llx_dump.so",data_dir_path,il2cpp_base);
+    LOGD("il2cpp_dump_path:%s",il2cpp_dump_path);
+
+    // 打开文件（创建并截断）
+    int fd = open(il2cpp_dump_path, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR);
+    if (fd == -1) {
+        LOGE("Failed to open il2cpp_dump_path:%s",il2cpp_dump_path);
+        return;
+    }
+
+    size_t total_written = 0;
+    size_t remaining = end_addrs[vma_num-1] - il2cpp_base;
+    char* current_ptr = (char*)il2cpp_base;
+    char fill_buf[CHUNK_SIZE];
+    memset(fill_buf,0,CHUNK_SIZE);
+
+    // 分块写入，避免大内存一次性写入
+    while (remaining > 0) {
+        size_t chunk_size = (remaining > CHUNK_SIZE) ? CHUNK_SIZE : remaining;
+        ssize_t written = write(fd, current_ptr, chunk_size);
+
+        if (written <= 0) {
+            LOGE("Write error at offset %zu", total_written);
+            written = write(fd,fill_buf,chunk_size);
+        }
+
+        total_written += written;
+        remaining -= written;
+        current_ptr += written;
+    }
+
+    // 确保数据写入磁盘
+    fsync(fd);
+    close(fd);
+
+    LOGD("success dump:%s",module_path);
 }
 
 
@@ -211,6 +252,12 @@ void start_trace(char* data_dir_path){
     bool parse_ret = init_vma();
     if(!parse_ret){
         LOGE("can not get vma info");
+        return;
+    }
+
+    if(access(Fix_Module_Path, F_OK) != 0){
+        LOGE("Fix_Module_Path:%s not exit",Fix_Module_Path);
+        dump_so();
         return;
     }
 

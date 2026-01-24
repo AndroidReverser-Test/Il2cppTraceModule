@@ -6,6 +6,7 @@
 #define MAX_FULL_NAME_LEN 200
 #define MAX_VMA_NUM 10
 #define MAX_DIS_INS 30
+#define CHUNK_SIZE 4096
 #define Fix_Module_Path "/data/local/tmp/libil2cpp_fixed.so"
 
 struct Il2CppMetadataField
